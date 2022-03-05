@@ -5,20 +5,15 @@ import json
 from zipfile import ZipFile
 from typing import Iterable, Tuple
 from itertools import cycle, islice
-from dataclasses import dataclass
 from copy import deepcopy
+from functools import wraps
 
 import trio
 from trio_websocket import open_websocket_url
-from trio_websocket import HandshakeError
+from trio_websocket import HandshakeError, ConnectionClosed
 
 BUS_SEND_DELAY = 1
-
-
-@dataclass(frozen=True)
-class BusRoute:
-    bus_id: str
-    route: dict
+RECONNECT_TIMEOUT_SEC = 10
 
 
 def fake_bus_old(bus_id: str, route: dict) -> str:
@@ -102,16 +97,27 @@ def even_chunks(it, consumers_num):
     return iter(lambda: tuple(islice(it, size)), ())
 
 
-async def send_updates(server_address: str, receive_channel: trio.MemoryReceiveChannel):
-    async with receive_channel:
+def relaunch_on_disconnect(async_function):
+    @wraps(async_function)
+    async def wrapper(*args, **kwargs):
         while True:
             try:
-                async with open_websocket_url(url=server_address) as ws:
-                    async for value in receive_channel:
-                        await ws.send_message(value)
+                return await async_function(*args, **kwargs)
             except (OSError, HandshakeError) as ose:
                 logging.error(f'Connection attempt failed: {ose}')
-                await trio.sleep(10)
+                await trio.sleep(RECONNECT_TIMEOUT_SEC)
+            except ConnectionClosed as e:
+                logging.error(f'Connection has been closed {e}')
+                await trio.sleep(RECONNECT_TIMEOUT_SEC)
+
+    return wrapper
+
+
+@relaunch_on_disconnect
+async def send_updates(server_address: str, receive_channel: trio.MemoryReceiveChannel):
+    async with open_websocket_url(url=server_address) as ws:
+        async for value in receive_channel:
+            await ws.send_message(value)
 
 
 async def run_bus(send_channel: trio.MemorySendChannel,
