@@ -3,6 +3,7 @@ import logging
 from contextlib import suppress
 from functools import partial
 from typing import Iterable
+import argparse
 
 import trio
 from trio_websocket import serve_websocket, ConnectionClosed
@@ -10,6 +11,18 @@ from trio_websocket import serve_websocket, ConnectionClosed
 from fake_bus import main as main_fb, BUS_SEND_DELAY
 
 logging.basicConfig(level=logging.INFO)
+
+DEFAULT_CLIENT_HOST = '127.0.0.1'
+DEFAULT_CLIENT_PORT = 8080
+DEFAULT_BUS_SERVER_HOST = '127.0.0.1'
+DEFAULT_BUS_SERVER_PORT = 8000
+
+DEFAULT_CONFIG = {
+    'client_host': DEFAULT_CLIENT_HOST,
+    'client_port': DEFAULT_CLIENT_PORT,
+    'bus_server_host': DEFAULT_BUS_SERVER_HOST,
+    'bus_server_port': DEFAULT_BUS_SERVER_PORT,
+}
 
 
 class Bus:
@@ -147,16 +160,48 @@ async def listen_to_browser(ws, bounds: WindowBounds):
             break
 
 
-async def main():
+async def main(config: dict = None):
+    config = config or DEFAULT_CONFIG
     buses = Buses()
     bs = partial(bus_server, buses=buses)
     ttb = partial(talk_to_browser, buses=buses)
     async with trio.open_nursery() as nursery:
         nursery.start_soon(main_fb)
-        nursery.start_soon(partial(serve_websocket, handler=bs, host='127.0.0.1', port=8080, ssl_context=None))
-        nursery.start_soon(partial(serve_websocket, handler=ttb, host='127.0.0.1', port=8000, ssl_context=None))
+        nursery.start_soon(partial(serve_websocket,
+                                   handler=bs,
+                                   host=config['client_host'],
+                                   port=config['client_port'],
+                                   ssl_context=None)
+                           )
+        nursery.start_soon(partial(serve_websocket,
+                                   handler=ttb,
+                                   host=config['bus_server_host'],
+                                   port=config['bus_server_port'],
+                                   ssl_context=None)
+                           )
+
+
+def parse_config() -> dict:
+    parser = argparse.ArgumentParser(description='Run Bus server')
+    parser.add_argument("-c", "--client-server",
+                        help="client server address", default=DEFAULT_CLIENT_HOST)
+    parser.add_argument("-p", "--port", type=int, help="clients server port", default=DEFAULT_CLIENT_PORT)
+    parser.add_argument("-s", "--bus-server",
+                        help="client server address", default=DEFAULT_BUS_SERVER_HOST)
+    parser.add_argument("--bp", type=int, help="clients server port", default=DEFAULT_BUS_SERVER_PORT)
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show logging information")
+    args = parser.parse_args()
+    if args.verbose:
+        logging.basicConfig(level=logging.INFO)
+
+    return {
+        'client_host': args.client_server,
+        'client_port': args.port,
+        'bus_server_host': args.bus_server,
+        'bus_server_port': args.bp,
+    }
 
 
 if __name__ == '__main__':
     with suppress(KeyboardInterrupt):
-        trio.run(main)
+        trio.run(main, parse_config())
