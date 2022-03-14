@@ -6,11 +6,10 @@ from typing import Iterable
 import argparse
 
 import trio
+from jsonschema import Draft7Validator
 from trio_websocket import serve_websocket, ConnectionClosed
 
 from fake_bus import main as main_fb, BUS_SEND_DELAY
-
-logging.basicConfig(level=logging.INFO)
 
 DEFAULT_CLIENT_HOST = '127.0.0.1'
 DEFAULT_CLIENT_PORT = 8080
@@ -22,6 +21,40 @@ DEFAULT_CONFIG = {
     'client_port': DEFAULT_CLIENT_PORT,
     'bus_server_host': DEFAULT_BUS_SERVER_HOST,
     'bus_server_port': DEFAULT_BUS_SERVER_PORT,
+}
+
+WINDOW_BOUND_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "msgType": {
+            "type": "string",
+            "pattern": "^newBounds$",
+        },
+        "data": {
+            "type": "object",
+            "properties": {
+                "south_lat": {"type": "number",
+                              "minimum": -90,
+                              "maximum": 90,
+                              },
+                'north_lat': {"type": "number",
+                              "minimum": -90,
+                              "maximum": 90,
+                              },
+                'west_lng': {"type": "number",
+                             "minimum": -90,
+                             "maximum": 90,
+                             },
+                'east_lng': {"type": "number",
+                             "minimum": -90,
+                             "maximum": 90,
+                             },
+            },
+            "required": ["south_lat", "north_lat", "west_lng", "east_lng"]
+
+        },
+    },
+    "required": ["msgType", "data"]
 }
 
 
@@ -68,6 +101,16 @@ class Buses:
         return (bus for bus in self.buses.values())
 
 
+class BoundsReadMessageException(Exception):
+    def __init__(self, expts: Iterable[str], message="Problems with parsing Bounds Message"):
+        self._exceptions_messages = expts
+        self._message = message
+        super().__init__(message)
+
+    def __iter__(self):
+        return (message for message in self._exceptions_messages)
+
+
 class WindowBounds:
 
     def __init__(self,
@@ -109,15 +152,25 @@ class WindowBounds:
             self._west_lng = west_lng
             self._east_lng = east_lng
         self._bounded_buses = [bus for bus in self._buses if self.is_inside(bus)]
-        logging.info(f'{len(self._bounded_buses)} in bound')
+        logging.debug(f'{len(self._bounded_buses)} in bound')
 
     def dump(self) -> str:
         buses = [bus.dump() for bus in self._bounded_buses]
-        logging.info(buses)
+        logging.debug(buses)
         return json.dumps({
             "msgType": "Buses",
             "buses": buses
         })
+
+    def process_message(self, message: str):
+        try:
+            message = json.loads(message)
+        except json.JSONDecodeError as e:
+            raise BoundsReadMessageException(expts=["not valid JSON"])
+        errors = sorted(Draft7Validator(WINDOW_BOUND_SCHEMA).iter_errors(message), key=str)
+        if errors:
+            raise BoundsReadMessageException(expts=[error.message for error in errors])
+        self.update(**message['data'])
 
 
 async def bus_server(request, buses: Buses):
@@ -140,22 +193,36 @@ async def send_buses(ws, bounds: WindowBounds):
             break
 
 
-async def talk_to_browser(request, buses: Buses):
+async def talk_to_browser_old(request, bounds: WindowBounds):
     ws = await request.accept()
-    bounds = WindowBounds(buses=buses)
     async with trio.open_nursery() as nursery:
         nursery.start_soon(listen_to_browser, ws, bounds)
         nursery.start_soon(send_buses, ws, bounds)
+
+
+async def talk_to_browser(request, coros: Iterable):
+    ws = await request.accept()
+    async with trio.open_nursery() as nursery:
+        [nursery.start_soon(coro, ws) for coro in coros]
+
+
+async def send_error_message(ws, e: BoundsReadMessageException):
+    msg = json.dumps({
+        'errors': [message for message in e],
+        "msgType": "Errors",
+    })
+    await ws.send_message(msg)
 
 
 async def listen_to_browser(ws, bounds: WindowBounds):
     while True:
         try:
             message = await ws.get_message()
-            message = json.loads(message)
-            if 'msgType' in message and message['msgType'] == 'newBounds' and 'data' in message:
-                logging.info(message)
-                bounds.update(**message['data'])
+            try:
+                bounds.process_message(message=message)
+            except BoundsReadMessageException as e:
+                await send_error_message(ws, e)
+
         except ConnectionClosed:
             break
 
@@ -163,21 +230,28 @@ async def listen_to_browser(ws, bounds: WindowBounds):
 async def main(config: dict = None):
     config = config or DEFAULT_CONFIG
     buses = Buses()
+    bounds = WindowBounds(buses=buses)
+    coros = [
+        partial(listen_to_browser, bounds=bounds),
+        partial(send_buses, bounds=bounds),
+    ]
+    ttb = partial(talk_to_browser, coros=coros)
     bs = partial(bus_server, buses=buses)
-    ttb = partial(talk_to_browser, buses=buses)
     async with trio.open_nursery() as nursery:
         nursery.start_soon(main_fb)
         nursery.start_soon(partial(serve_websocket,
                                    handler=bs,
                                    host=config['client_host'],
                                    port=config['client_port'],
-                                   ssl_context=None)
+                                   ssl_context=None,
+                                   )
                            )
         nursery.start_soon(partial(serve_websocket,
                                    handler=ttb,
                                    host=config['bus_server_host'],
                                    port=config['bus_server_port'],
-                                   ssl_context=None)
+                                   ssl_context=None,
+                                   )
                            )
 
 

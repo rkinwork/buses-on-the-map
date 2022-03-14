@@ -2,3 +2,6 @@ trio-websocket==0.9.2
 trio==0.20.0
 asyncclick==8.0.3.2
 anyio==3.5.0
+pytest==7.0.1
+pytest-trio==0.7.0
+jsonschema==4.4.0
