@@ -6,7 +6,7 @@ import pytest
 from trio_websocket import serve_websocket, open_websocket
 import trio
 
-from server import talk_to_browser, WindowBounds, Buses, listen_to_browser
+from server import talk_to_browser, WindowBounds, Buses, listen_to_browser, bus_server
 
 HOST = '127.0.0.1'
 RESOURCE = '/'
@@ -105,4 +105,87 @@ async def test_client_send_and_receive(message, check, ttb_conn):
     async with ttb_conn:
         await ttb_conn.send_message(message)
         received_msg = await ttb_conn.get_message()
+        assert received_msg == check
+
+
+@pytest.fixture
+async def bus_server_fixt(nursery):
+    buses = Buses()
+    bs = partial(bus_server, buses=buses)
+    serve_fn = partial(serve_websocket,
+                       bs,
+                       HOST,
+                       0,
+                       ssl_context=None)
+    server = await nursery.start(serve_fn)
+    yield server
+
+
+@pytest.fixture
+async def bus_server_conn(bus_server_fixt):
+    async with open_websocket(
+        HOST,
+        bus_server_fixt.port,
+        RESOURCE,
+        use_ssl=False,
+    ) as conn:
+        yield conn
+
+
+@FailAfter(3)
+@pytest.mark.parametrize('message, check', [
+    (
+        '{',
+        json.dumps(
+            {"errors": ["not valid JSON"], "msgType": "Errors"}
+        ),
+    ),
+    (
+        json.dumps(
+            {
+                'wrongKey': 'wrong_value',
+            },
+        ),
+        json.dumps(
+            {
+                "errors": ["'busId' is a required property",
+                           "'lat' is a required property",
+                           "'lng' is a required property",
+                           "'route' is a required property",
+                           ],
+                "msgType": "Errors",
+            }
+        ),
+
+    ),
+    (
+        json.dumps(
+            {
+                "busId": 0,
+                "lat": 'lat string',
+                "lng": 'lng string',
+                "route": 0,
+            },
+        ),
+        json.dumps(
+            {
+                "errors":
+                    [
+                        "'lat string' is not of type 'number'",
+                        "'lng string' is not of type 'number'",
+                        "0 is not of type 'string'",
+                        "0 is not of type 'string'",
+                    ],
+                "msgType": "Errors"
+            }
+
+        ),
+
+    ),
+
+])
+async def test_bus_server_send_and_receive(message, check, bus_server_conn):
+    async with bus_server_conn:
+        await bus_server_conn.send_message(message)
+        received_msg = await bus_server_conn.get_message()
         assert received_msg == check

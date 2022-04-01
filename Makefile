@@ -4,4 +4,6 @@ fake:
 run_server:
 	python3 server.py
 
+test:
+	pytest test_server.py
 

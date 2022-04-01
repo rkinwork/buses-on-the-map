@@ -2,7 +2,7 @@ import json
 import logging
 from contextlib import suppress
 from functools import partial
-from typing import Iterable
+from typing import Iterable, Type
 import argparse
 
 import trio
@@ -57,6 +57,61 @@ WINDOW_BOUND_SCHEMA = {
     "required": ["msgType", "data"]
 }
 
+BUS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "busId": {
+            "type": "string",
+        },
+        'lat': {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+        },
+        'lng': {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+        },
+        'route': {
+            "type": "string",
+        },
+    },
+    "required": [
+        "busId",
+        "lat",
+        "lng",
+        "route",
+    ]
+}
+
+
+class MessageException(Exception):
+    def __init__(self, expts: Iterable[str], message='Problems with parsing and validating response'):
+        self._exceptions_messages = expts
+        super().__init__(message)
+
+    def __iter__(self):
+        return (message for message in self._exceptions_messages)
+
+
+class BoundsReadMessageException(MessageException):
+    pass
+
+
+class BusReadMessageException(MessageException):
+    pass
+
+
+def validate_message(schema: dict, exception_cls: Type[MessageException], message: str):
+    try:
+        message = json.loads(message)
+    except json.JSONDecodeError as e:
+        raise exception_cls(expts=["not valid JSON"])
+    errors = sorted(Draft7Validator(schema).iter_errors(message), key=str)
+    if errors:
+        raise exception_cls(expts=[error.message for error in errors])
+
 
 class Bus:
 
@@ -73,7 +128,11 @@ class Bus:
 
     @classmethod
     def parse_response(cls, response):
+        validate_message(schema=BUS_SCHEMA,
+                         exception_cls=BusReadMessageException,
+                         message=response)
         response = json.loads(response)
+
         return cls(bus_id=response['busId'],
                    lat=response['lat'],
                    lng=response['lng'],
@@ -99,16 +158,6 @@ class Buses:
 
     def __iter__(self) -> Iterable[Bus]:
         return (bus for bus in self.buses.values())
-
-
-class BoundsReadMessageException(Exception):
-    def __init__(self, expts: Iterable[str], message="Problems with parsing Bounds Message"):
-        self._exceptions_messages = expts
-        self._message = message
-        super().__init__(message)
-
-    def __iter__(self):
-        return (message for message in self._exceptions_messages)
 
 
 class WindowBounds:
@@ -163,13 +212,11 @@ class WindowBounds:
         })
 
     def process_message(self, message: str):
-        try:
-            message = json.loads(message)
-        except json.JSONDecodeError as e:
-            raise BoundsReadMessageException(expts=["not valid JSON"])
-        errors = sorted(Draft7Validator(WINDOW_BOUND_SCHEMA).iter_errors(message), key=str)
-        if errors:
-            raise BoundsReadMessageException(expts=[error.message for error in errors])
+        validate_message(schema=WINDOW_BOUND_SCHEMA,
+                         exception_cls=BoundsReadMessageException,
+                         message=message)
+
+        message = json.loads(message)
         self.update(**message['data'])
 
 
@@ -178,9 +225,13 @@ async def bus_server(request, buses: Buses):
     while True:
         try:
             message = await ws.get_message()
-            buses.add_bus(message)
         except ConnectionClosed:
             break
+
+        try:
+            buses.add_bus(message)
+        except BusReadMessageException as e:
+            await send_error_message(ws, e)
 
 
 async def send_buses(ws, bounds: WindowBounds):
@@ -193,20 +244,13 @@ async def send_buses(ws, bounds: WindowBounds):
             break
 
 
-async def talk_to_browser_old(request, bounds: WindowBounds):
-    ws = await request.accept()
-    async with trio.open_nursery() as nursery:
-        nursery.start_soon(listen_to_browser, ws, bounds)
-        nursery.start_soon(send_buses, ws, bounds)
-
-
 async def talk_to_browser(request, coros: Iterable):
     ws = await request.accept()
     async with trio.open_nursery() as nursery:
         [nursery.start_soon(coro, ws) for coro in coros]
 
 
-async def send_error_message(ws, e: BoundsReadMessageException):
+async def send_error_message(ws, e: MessageException):
     msg = json.dumps({
         'errors': [message for message in e],
         "msgType": "Errors",
@@ -218,24 +262,24 @@ async def listen_to_browser(ws, bounds: WindowBounds):
     while True:
         try:
             message = await ws.get_message()
-            try:
-                bounds.process_message(message=message)
-            except BoundsReadMessageException as e:
-                await send_error_message(ws, e)
-
         except ConnectionClosed:
             break
+
+        try:
+            bounds.process_message(message=message)
+        except BoundsReadMessageException as e:
+            await send_error_message(ws, e)
 
 
 async def main(config: dict = None):
     config = config or DEFAULT_CONFIG
     buses = Buses()
     bounds = WindowBounds(buses=buses)
-    coros = [
+    talk_to_browser_coros = [
         partial(listen_to_browser, bounds=bounds),
         partial(send_buses, bounds=bounds),
     ]
-    ttb = partial(talk_to_browser, coros=coros)
+    ttb = partial(talk_to_browser, coros=talk_to_browser_coros)
     bs = partial(bus_server, buses=buses)
     async with trio.open_nursery() as nursery:
         nursery.start_soon(main_fb)

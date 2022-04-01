@@ -16,32 +16,12 @@ BUS_SEND_DELAY = 1
 RECONNECT_TIMEOUT_SEC = 10
 
 
-def fake_bus_old(bus_id: str, route: dict) -> str:
-    resp = {
-        "msgType": "Buses",
-        "buses": [
-            {
-                "busId": bus_id,
-                "lat": 55.7500,
-                "lng": 37.600,
-                "route": route['name'],
-            },
-        ]
-    }
-
-    coordinates = route['coordinates']
-    for coord in coordinates:
-        resp['buses'][0]['lat'] = coord[0]
-        resp['buses'][0]['lng'] = coord[1]
-        yield json.dumps(resp, ensure_ascii=False)
-
-
 def fake_bus(bus_id: str, route: dict) -> str:
     resp = {
-        "busId": bus_id,
+        "busId": str(bus_id),
         "lat": 55.7500,
         "lng": 37.600,
-        "route": route['name'],
+        "route": str(route['name']),
     }
 
     coordinates = route['coordinates']
@@ -49,24 +29,6 @@ def fake_bus(bus_id: str, route: dict) -> str:
         resp['lat'] = coord[0]
         resp['lng'] = coord[1]
         yield json.dumps(resp, ensure_ascii=False)
-
-
-async def run_bus_old(url: str, bus_id: str, route: dict):
-    while True:
-        try:
-            async with open_websocket_url(url=url) as ws:
-                for m in fake_bus(bus_id=bus_id, route=route):
-                    await ws.send_message(m)
-                    await trio.sleep(BUS_SEND_DELAY)
-        except (OSError, HandshakeError) as ose:
-            logging.error('Connection attempt failed: %s' % ose)
-            await trio.sleep(10)
-
-
-async def run_bus_test(send_channel: trio.MemorySendChannel, bus_id: str, route: dict):
-    while True:
-        for m in fake_bus(bus_id=bus_id, route=route):
-            await send_channel.send(m)
 
 
 def load_routes_from_source(routes='routes.zip', limit=10) -> Iterable[dict]:
