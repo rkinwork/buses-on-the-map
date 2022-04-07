@@ -7,3 +7,9 @@ run_server:
 test:
 	pytest test_server.py
 
+frontend_run:
+	python3 -m http.server 8889
+
+demo:
+	docker-compose up --build
+

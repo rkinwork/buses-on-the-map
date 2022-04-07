@@ -3,13 +3,13 @@ import logging
 from contextlib import suppress
 from functools import partial
 from typing import Iterable, Type
-import argparse
 
+import configargparse
 import trio
 from jsonschema import Draft7Validator
 from trio_websocket import serve_websocket, ConnectionClosed
 
-from fake_bus import main as main_fb, BUS_SEND_DELAY
+BUS_SEND_DELAY = 1
 
 DEFAULT_CLIENT_HOST = '127.0.0.1'
 DEFAULT_CLIENT_PORT = 8080
@@ -282,7 +282,6 @@ async def main(config: dict = None):
     ttb = partial(talk_to_browser, coros=talk_to_browser_coros)
     bs = partial(bus_server, buses=buses)
     async with trio.open_nursery() as nursery:
-        nursery.start_soon(main_fb)
         nursery.start_soon(partial(serve_websocket,
                                    handler=bs,
                                    host=config['client_host'],
@@ -300,14 +299,29 @@ async def main(config: dict = None):
 
 
 def parse_config() -> dict:
-    parser = argparse.ArgumentParser(description='Run Bus server')
+    parser = configargparse.ArgumentParser(description='Run Bus server')
     parser.add_argument("-c", "--client-server",
-                        help="client server address", default=DEFAULT_CLIENT_HOST)
-    parser.add_argument("-p", "--port", type=int, help="clients server port", default=DEFAULT_CLIENT_PORT)
+                        help="client server address",
+                        env_var='BUS_SERVER__SERVER_ADDRESS',
+                        default=DEFAULT_CLIENT_HOST)
+    parser.add_argument("-p", "--port",
+                        type=int,
+                        help="clients server port",
+                        env_var='BUS_SERVER__PORT',
+                        default=DEFAULT_CLIENT_PORT)
     parser.add_argument("-s", "--bus-server",
-                        help="client server address", default=DEFAULT_BUS_SERVER_HOST)
-    parser.add_argument("--bp", type=int, help="clients server port", default=DEFAULT_BUS_SERVER_PORT)
-    parser.add_argument("-v", "--verbose", action="store_true", help="Show logging information")
+                        help="server address for bus clients",
+                        env_var='BUS_SERVER__BUS_CLIENT_HOST',
+                        default=DEFAULT_BUS_SERVER_HOST)
+    parser.add_argument("--bp",
+                        type=int,
+                        help="clients server port",
+                        env_var='BUS_SERVER__BUS_CLIENT_PORT',
+                        default=DEFAULT_BUS_SERVER_PORT)
+    parser.add_argument("-v", "--verbose",
+                        action="store_true",
+                        env_var='BUS_SERVER__VERBOSE',
+                        help="Show logging information")
     args = parser.parse_args()
     if args.verbose:
         logging.basicConfig(level=logging.INFO)

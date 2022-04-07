@@ -1,0 +1,42 @@
+version: "3.9"
+services:
+  base:
+    image: buses-on-the-map
+    build:
+      context: .
+      dockerfile: Docker/base/Dockerfile
+    container_name: base
+  web:
+    image: web
+    build:
+      context: .
+      dockerfile: Docker/web/Dockerfile
+    ports:
+      - "8888:8888"
+    depends_on:
+      - base
+
+  bus_server:
+    image: bus_server
+    build:
+      context: .
+      dockerfile: Docker/bus_server/Dockerfile
+    ports:
+      - "8000:8000"
+      - "8080:8080"
+    env_file:
+      - Docker/bus_server/bus_server.env
+    depends_on:
+      - base
+
+  fake_bus:
+    image: fake_bus
+    build:
+      context: .
+      dockerfile: Docker/fake_bus/Dockerfile
+    env_file:
+      - Docker/fake_bus/fake_bus.env
+    depends_on:
+      - base
+
+

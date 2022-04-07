@@ -1,4 +1,3 @@
-import argparse
 import logging
 from contextlib import suppress
 import json
@@ -8,11 +7,11 @@ from itertools import cycle, islice
 from copy import deepcopy
 from functools import wraps
 
+import configargparse
 import trio
 from trio_websocket import open_websocket_url
 from trio_websocket import HandshakeError, ConnectionClosed
 
-BUS_SEND_DELAY = 1
 RECONNECT_TIMEOUT_SEC = 10
 
 
@@ -44,7 +43,6 @@ def load_routes(routes_source='routes.zip', num_routes=10, buses_per_route=50, p
     prefix = prefix + '__' if prefix else ''
     for route in load_routes_from_source(routes=routes_source, limit=num_routes):
         coordinates, coord_len = route['coordinates'], len(route['coordinates'])
-        # for pos in range(1, randint(1, buses_per_route_max)):
         for pos in range(1, buses_per_route):
             route['coordinates'] = [*coordinates[coord_len // pos:], *coordinates[:coord_len // pos]]
             yield (
@@ -120,23 +118,47 @@ async def emulate_bus_run(server: str,
             nursery.start_soon(batch_run_bus, server, chunk, refresh_timeout)
 
 
-async def main(config: [dict] = None):
+async def main(config: dict = None):
     config = config or {}
-    if 'server' not in config:
+    if config.get('server', '') is None:
         config['server'] = 'ws://127.0.0.1:8080'
     await emulate_bus_run(**config)
 
 
 def parse_config() -> dict:
-    parser = argparse.ArgumentParser(description='Generate fake buses for server testing purpose')
+    parser = configargparse.ArgumentParser(description='Generate fake buses for server testing purpose')
     parser.add_argument("-s", "--server",
-                        help="socket address")
-    parser.add_argument("-r", "--routes", type=int, help="how many routes generate", default=10)
-    parser.add_argument("-n", "--number", type=int, help="how many generate buses per route", default=10)
-    parser.add_argument("--sockets", type=int, help="how many sockets we should generate", default=3)
-    parser.add_argument("-e", "--emid", help="prefix for emulated buses", default='')
-    parser.add_argument("-t", "--timeout", type=int, help="bus info refresh timeout", default=1)
-    parser.add_argument("-v", "--verbose", action="store_true", help="Show logging information")
+                        help="target server socket formatted as ws://127.0.0.1:8080",
+                        env_var='FAKE_BUS__TARGET_SERVER_HOST'
+                        )
+    parser.add_argument("-r", "--routes",
+                        type=int,
+                        help="how many routes generate",
+                        env_var='FAKE_BUS__ROUTES',
+                        default=10)
+    parser.add_argument("-n", "--number",
+                        type=int,
+                        help="how many generate buses per route",
+                        env_var='FAKE_BUS__ROUTES_COUNT',
+                        default=10)
+    parser.add_argument("--sockets",
+                        type=int,
+                        help="how many sockets we should generate",
+                        env_var='FAKE_BUS__SOCKETS_NUM',
+                        default=3)
+    parser.add_argument("-e", "--emid",
+                        help="prefix for emulated buses",
+                        env_var='FAKE_BUS__ROUTE_PREFIX',
+                        default='')
+    parser.add_argument("-t", "--timeout",
+                        type=int,
+                        help="bus info refresh timeout in seconds",
+                        env_var='FAKE_BUS__SEND_TIMEOUT',
+                        default=1)
+    parser.add_argument("-v", "--verbose",
+                        action="store_true",
+                        env_var='FAKE_BUS__VERBOSE',
+                        help="Show logging information")
     args = parser.parse_args()
     if args.verbose:
         logging.basicConfig(level=logging.INFO)
