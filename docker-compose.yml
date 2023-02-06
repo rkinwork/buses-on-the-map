@@ -1,42 +1,90 @@
 version: "3.9"
 services:
-  base:
-    image: buses-on-the-map
-    build:
-      context: .
-      dockerfile: Docker/base/Dockerfile
-    container_name: base
   web:
     image: web
     build:
       context: .
-      dockerfile: Docker/web/Dockerfile
+      dockerfile: Docker/Dockerfile
+      target: frontend
+    expose:
+      - 8888
     ports:
       - "8888:8888"
-    depends_on:
-      - base
+    command:
+      - "python"
+      - "-m"
+      - "http.server"
+      - "8888"
 
   bus_server:
-    image: bus_server
     build:
       context: .
-      dockerfile: Docker/bus_server/Dockerfile
+      dockerfile: Docker/Dockerfile
+      target: server_base
+    expose:
+      - 8000
+      - 8080
     ports:
       - "8000:8000"
       - "8080:8080"
     env_file:
       - Docker/bus_server/bus_server.env
-    depends_on:
-      - base
+    container_name: bus_server
+    volumes:
+      - ./src:/src
+    command:
+      - "python3"
+      - "buses/server.py"
 
   fake_bus:
-    image: fake_bus
     build:
       context: .
-      dockerfile: Docker/fake_bus/Dockerfile
+      dockerfile: Docker/Dockerfile
+      target: server_base
     env_file:
       - Docker/fake_bus/fake_bus.env
-    depends_on:
-      - base
+    container_name: fake_bus
+    volumes:
+      - ./src:/src
+    command:
+      - "python3"
+      - "buses/fake_bus.py"
+      - "-s"
+      - "ws://bus_server:8080"
+      - "-z"
+      - "buses/routes.zip"
+
+  run_tests:
+    build:
+      context: .
+      dockerfile: Docker/Dockerfile
+      target: server_base
+    profiles:
+      - tests
+    volumes:
+      - ./src:/src
+      - ./tests:/tests
+    command:
+      - bash
+      - -c
+      - "pytest /tests"
+
+  lint:
+    build:
+      context: .
+      dockerfile: Docker/Dockerfile
+      target: server_base
+    profiles:
+      - tests
+    volumes:
+      - ./src:/src
+      - ./tests:/tests
+    command:
+      - bash
+      - -c
+      - "flake8 --config /tests/setup.cfg"
+
+
+
 
 

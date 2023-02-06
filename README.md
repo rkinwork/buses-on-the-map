@@ -17,6 +17,7 @@
 
 - в директории с проектом выполните команду `make demo`
 - После того как сборка завершиться откройте http://127.0.0.1:8888/
+- Что бы корректно завершить `make stop`
 
 ### Для разработки и тестов
 
@@ -24,11 +25,7 @@
 
 ```shell
 git clone git@github.com:rkinwork/buses-on-the-map.git
-pyenv install 3.10.2
 cd buses-on-the-map
-pyenv virtualenv 3.10.2 buses-on-the-map
-pyenv activate buses-on-the-map
-pip3 install -r requirements.txt
 ```
 
 Запустим тесты
@@ -39,10 +36,9 @@ make test
 
 #### Локальный запуск
 
-- в терминале 1 ```make run_server```
-- в терминале 2 ```make fake```
-- в терминале 3 ```make frontend_run```
-- открываем броузер http://127.0.0.1:8889/
+- в терминале ```make start```
+- открываем броузер http://127.0.0.1:8888/
+- ```make stop``` что бы завершить работу
 
 ## Настройки бэкенд
 

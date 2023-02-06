@@ -6,7 +6,8 @@ import pytest
 from trio_websocket import serve_websocket, open_websocket
 import trio
 
-from server import talk_to_browser, WindowBounds, Buses, listen_to_browser, bus_server
+from buses.server import Server
+from buses.models import WindowBounds, Buses
 
 HOST = '127.0.0.1'
 RESOURCE = '/'
@@ -23,7 +24,11 @@ class FailAfter:
             with trio.move_on_after(self._seconds) as cancel_scope:
                 await fn(*args, **kwargs)
             if cancel_scope.cancelled_caught:
-                pytest.fail(f'Test runtime exceeded the maximum {self._seconds} seconds')
+                pytest.fail(
+                    'Test runtime exceeded the maximum {0} seconds'.format(
+                        self._seconds,
+                    ),
+                )
 
         return wrapper
 
@@ -33,9 +38,9 @@ async def ttb_server(nursery):
     buses = Buses()
     bounds = WindowBounds(buses=buses)
     coros = [
-        partial(listen_to_browser, bounds=bounds),
+        partial(Server.listen_to_browser, bounds=bounds),
     ]
-    ttb = partial(talk_to_browser, coros=coros)
+    ttb = partial(Server.talk_to_browser, coros=coros)
     serve_fn = partial(serve_websocket,
                        ttb,
                        HOST,
@@ -111,7 +116,7 @@ async def test_client_send_and_receive(message, check, ttb_conn):
 @pytest.fixture
 async def bus_server_fixt(nursery):
     buses = Buses()
-    bs = partial(bus_server, buses=buses)
+    bs = partial(Server().bus_server, buses=buses)
     serve_fn = partial(serve_websocket,
                        bs,
                        HOST,
