@@ -1,5 +1,5 @@
 test:
-	docker compose run -rm run_tests
+	docker compose run --rm run_tests
 
 demo:
 	docker compose up -d
@@ -11,5 +11,5 @@ stop
   docker compose down --remove-orphans
 
 lint
-  docker compose run -rm lint
+  docker compose run --rm lint
 
